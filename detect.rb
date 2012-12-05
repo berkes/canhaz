@@ -1,39 +1,81 @@
-require "rubygems"
-require "mechanize"
-require "hpricot"
-require "progressbar"
-require "./style"
-
-base_url = "http://dic.audrey"
-amount   = 50
-# @TODO: should detect styles by itself; by crawling over the site.
-styles = [:medium, :thumbnail, :large]
-
-a = Mechanize.new { |agent|
-  agent.user_agent_alias = 'Mac Safari' #@TODO prolly want to make it appear less like a bot.
-  # TODO: Faux referrer and session here to circument "security" such as disallowing hotlinking.
-}
-
-page = a.get(base_url)
-@response = page.content
-doc = Hpricot(@response)
-
-image_url = doc.search(".field-type-image img").first.attributes["src"]
-style = Style.new(image_url)
-
-method = ""
-total = (amount * styles.count)
-pbar = ProgressBar.new("fetching imgs", total)
-(1..amount).each do |i|
-  styles.each do |style_name|
-    style.name = style_name.to_s
-    # puts style.url
-    # POC show that with apache fetching HEAD is enough to create the imagecached file. Makes it easier to DDOS.
-    a.head(style.url)
-    pbar.inc
+class Detect
+  attr_reader :agent
+  def initialize url, agent = nil
+    @url = url
+    @agent = agent || get_agent
+    @doc = get_doc
   end
-  style = style.nested
+
+  def haz?
+    paths_with_ic_source.count > 0
+  end
+
+  def styles
+    styles = []
+    paths.each do |path|
+      style = Style.new(path)
+      styles << style.name unless styles.include? style.name
+    end
+    styles
+  end
+
+  def paths
+   paths = []
+    @doc.search("img").each do |img|
+      src = img.attributes["src"]
+      paths << src if src =~ STYLE_RE
+    end
+    paths
+  end
+
+  def potentials limit = 100, override_styles = nil
+    counter = 0;
+    limit = limit.to_i
+    styles = override_styles || styles()
+
+    potentials = []
+    styles.each do |style|
+      paths.each do |path|
+        counter += 1
+        if (counter <= limit)
+          so = Style.new(path)
+          potentials << so.mixmash(style, path)
+        end
+      end
+    end
+
+    if (potentials.count < limit)
+      nested potentials, limit
+    else
+      potentials
+    end
+  end
+
+  private
+  def get_agent
+    @agent = Mechanize.new { |agent|
+      agent.user_agent_alias = 'Mac Safari'
+    }
+  end
+
+  def get_doc
+    @doc = Hpricot(@agent.get(@url).content)
+  end
+
+  def nested potentials, limit
+    nested = []
+
+    amount_runs = (limit / potentials.count).to_i
+
+    potentials.each do |path|
+      style = Style.new(path)
+      amount_runs.times do
+        style = style.nested
+        #http://stackoverflow.com/questions/1289585/what-is-apaches-maximum-url-length
+        nested << style.url unless style.url.length > 4000
+      end
+    end
+
+    nested
+  end
 end
-puts "calls: #{total}"
-puts "example #{style.url}"
-pbar.finish
