@@ -44,7 +44,7 @@ class Detect
       end
     end
 
-    if (potentials.count < limit)
+    if (!potentials.empty? && potentials.count < limit)
       nested potentials, limit
     else
       potentials
